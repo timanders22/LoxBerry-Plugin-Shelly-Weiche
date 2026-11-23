@@ -1,10 +1,15 @@
 # Shelly-Weiche – LoxBerry-Plugin
 
-Fassung 0.9.0 – erste Fassung.
+Fassung 0.9.1.
 
 Shelly H&T Gen3 (Batteriefühler für Temperatur und Feuchte) melden sich mit eigenem MQTT am Broker des LoxBerry. Ihre Messwerte kommen als JSON-RPC-Benachrichtigung unter `<präfix>/events/rpc`, **nicht zurückbehalten** und nur in den kurzen Augenblicken, in denen das Gerät aufwacht. Wer später fragt, bekommt nichts; zurückbehalten ist nur `<präfix>/online`, und das steht im Schlaf auf `false`.
 
 Die Shelly-Weiche hört diese Meldungen mit, merkt sich je Gerät die letzten Werte und gibt sie – nur wenn Sie es einschalten, ab Werk aus – unter `haus/klima/<name>/…` an andere Plugins weiter (Raumklima, Sprachsteuerung, SignalBot). Dem Miniserver liefert sie nichts; das MQTT-Gateway abonniert die Themen der Geräte weiter wie bisher.
+
+## Neu in 0.9.1
+
+- **Berichtigt – reservierter Name `datum_text`:** Ein Gerät mit dem Namen `datum_text` wird jetzt wie `zaehler` oder `heute` abgewiesen: beim Speichern beanstandet, im Reiter Test gemeldet und nicht gesendet. Weatherdata sendet seit 0.9.13 das Thema `haus/wetter/datum_text`; der Name fehlte in der Liste der reservierten Namen (Regeln/07).
+- Reiter Test: Die Selbstprüfung der Namensregel prüft auch `datum_text`.
 
 ## Was das Plugin tut
 

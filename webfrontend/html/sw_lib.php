@@ -1475,7 +1475,7 @@ function sw_freigeben($s)
 /** Namen, die nie ein <name> sind (Regeln/07 Nr. 15; wie KLIMA_RESERVIERT des BLE-Scanner NG). */
 function sw_haus_reserviert()
 {
-    return array('zaehler', 'anbieter', 'jetzt', 'heute', 'morgen', 'warnung', 'pollen', 'ok', 'datum', 'zeit', 'sprache');
+    return array('zaehler', 'anbieter', 'jetzt', 'heute', 'morgen', 'warnung', 'pollen', 'ok', 'datum', 'datum_text', 'zeit', 'sprache');
 }
 
 /** Namensregel (Regeln/07 Nr. 15, wie ew_haus_name()): klein, Umlaute ausgeschrieben, jedes andere Zeichen ausser

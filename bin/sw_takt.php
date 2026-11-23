@@ -102,7 +102,7 @@ if ($sw_schalter === '--selbsttest') {
     $sw_zeile($sw_w['haus/klima/kueche/temperatur'] === '-999' && $sw_w['haus/klima/kueche/feuchte'] === '-1'
         && $sw_w['haus/klima/kueche/zeit'] === '1795300001', 'nach 16201 s ohne Meldung: ohne Aussage, zeit bleibt echt');
     $sw_zeile(sw_haus_name("K\u{00FC}che S\u{00FC}d") === 'kueche_sued' && !sw_haus_name_taugt('Bad')
-        && !sw_haus_name_taugt('zaehler') && sw_haus_name_taugt('bad_oben'), 'Namensregel');
+        && !sw_haus_name_taugt('zaehler') && !sw_haus_name_taugt('datum_text') && sw_haus_name_taugt('bad_oben'), 'Namensregel');
     $sw_v = sw_vorbelegung(array('shellyhtg3-Kueche', 'shellyhtg3-0a1b2c3d4e5f', 'shellyhtg3-kueche'), array());
     $sw_zeile($sw_v === array('shellyhtg3-Kueche' => 'kueche', 'shellyhtg3-0a1b2c3d4e5f' => 'shelly_ht_1',
         'shellyhtg3-kueche' => 'kueche_2'), 'Namensvorschlag: Raumteil, keine MAC im Namen, doppelt mit _2');
