@@ -1,10 +1,15 @@
 # Shelly-Weiche – LoxBerry-Plugin
 
-Fassung 0.9.1.
+Fassung 0.9.2.
 
 Shelly H&T Gen3 (Batteriefühler für Temperatur und Feuchte) melden sich mit eigenem MQTT am Broker des LoxBerry. Ihre Messwerte kommen als JSON-RPC-Benachrichtigung unter `<präfix>/events/rpc`, **nicht zurückbehalten** und nur in den kurzen Augenblicken, in denen das Gerät aufwacht. Wer später fragt, bekommt nichts; zurückbehalten ist nur `<präfix>/online`, und das steht im Schlaf auf `false`.
 
 Die Shelly-Weiche hört diese Meldungen mit, merkt sich je Gerät die letzten Werte und gibt sie – nur wenn Sie es einschalten, ab Werk aus – unter `haus/klima/<name>/…` an andere Plugins weiter (Raumklima, Sprachsteuerung, SignalBot). Dem Miniserver liefert sie nichts; das MQTT-Gateway abonniert die Themen der Geräte weiter wie bisher.
+
+## Neu in 0.9.2
+
+- **Gespeicherte Einstellungen, die beim Laden nicht gelten (Entscheidung des Hausherrn 23./24.11.2026, Regeln/05 „Lade-Beanstandungen“):** Trägt die Datei `shelly.json` einen ungültigen Wert (von Hand bearbeitet oder aus einer alten Fassung), arbeitet die Weiche weiter mit der Vorgabe, sagt es aber jetzt: ein gelber Kasten über den Reitern nennt jedes Feld mit gespeichertem und verwendetem Wert, der Reiter *Test* zeigt die Zeile „Gelten die gespeicherten Einstellungen beim Laden so, wie sie gespeichert sind?“ rot, und das Protokoll nennt die Namen einmal je Änderung. Bis 0.9.1 geschah das still – eine ungültige Geräteliste galt im Betrieb als leer, ein ungültiges Token als leer (jede Adresse im Miniserver wurde abgewiesen) –, und die Zeile „Werte, die das Zurückspielen abweisen würde“ sah es nicht, weil sie den schon bereinigten Stand prüfte. Jetzt bleibt die Datei, wie sie ist: Speichern behält bei einem genannten Feld, das Sie nicht ändern, den gespeicherten Wert; die angezeigten Werte übernimmt nur der Knopf „Angezeigte Werte übernehmen“ mit gesetztem Haken. Ein vorhandenes Token bleibt in Gebrauch – auch ein formwidriges, und das Formular „Einstellungen“ lässt sich mit ihm unverändert speichern; abgewiesen wird nur ein geänderter Wert. Der Minutentakt vervollständigt die Datei auch mit einem formwidrigen Token. Das Token erscheint in keiner Meldung mit seinem Wert, das Protokoll nennt keinen Wert. Gemeinsames Sicherungsmodul 1.3.0.
+- **Statusmeldungen an SignalBot (Entscheidung des Hausherrn 24.11.2026), ab Werk aus:** Im Reiter MQTT gibt es den Block „Meldungen an SignalBot“. Eingeschaltet meldet die Weiche unter `haus/meldung/shellyweiche` an das Plugin SignalBot (gemeinsames Modul `meldung.php`), wenn der MQTT-Broker nach einem Ausfall wieder erreichbar ist, mit der Dauer des Ausfalls (Anlass `broker_wieder`). Den Ausfall selbst kann sie nicht melden: ohne Broker erreicht keine Nachricht SignalBot. Erkannt wird der Ausfall am Lauscher, der sich jede Minute am Broker anmeldet. Dieselbe Meldung höchstens einmal in der eingestellten Sperrzeit (ab Werk 60 Minuten), insgesamt höchstens 10 je Stunde. Nötig ist SignalBot ab 0.9.44 mit „Meldungen unter haus/meldung annehmen“; der Knopf „Testmeldung senden“ prüft den Weg.
 
 ## Neu in 0.9.1
 

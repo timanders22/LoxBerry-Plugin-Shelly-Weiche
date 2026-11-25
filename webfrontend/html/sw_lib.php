@@ -3,6 +3,7 @@
  * "Einstellungen zurueckspielen" verhalten sich in allen Plugins des Hauses gleich. Liegt neben dieser Datei und
  * schuetzt sich selbst gegen doppeltes Laden. */
 require_once __DIR__ . '/sicherung.php';
+require_once __DIR__ . '/meldung.php';     // Statusmeldungen an SignalBot (seit 0.9.2)
 /**
  * Shelly-Weiche - gemeinsamer Unterbau
  *
@@ -161,6 +162,7 @@ function sw_vorgaben()
         'haus_klima_ein' => 0,
         'abo_zusatz'     => '',
         'geraete'        => array(),
+        'meldung'        => meld_vorgaben(sw_meld_anlaesse(), sw_meld_haken_vorgabe()),     // 0.9.2: Meldungen an SignalBot, ab Werk aus
     );
 }
 
@@ -335,6 +337,12 @@ function sw_wert_pruefen($k, $w)
         $ok = sw_abo_taugt($w);
         $wert = $w;
         break;
+    case 'meldung':     // 0.9.2: der Block 'Meldungen an SignalBot' (gemeinsames Modul)
+        $mf = meld_block_pruefen($w, sw_meld_anlaesse());
+        $ok = !$mf;
+        $wert = $w;
+        $grund = $mf ? meld_beanstandung_text($mf[0], sw_meld_k()) : '';
+        break;
     case 'geraete':
         $m = sw_geraete_pruefen($w);
         $ok = !$m;
@@ -350,6 +358,78 @@ function sw_wert_pruefen($k, $w)
     }
     return array(false, null, sprintf(sw_t('TEXT.WERT_UNZULAESSIG'), $k,
         sw_wert_zeigen($w, $k === 'token'), sw_t('ERLAUBT.' . strtoupper($k))));
+}
+
+/* ==================================================================
+ * Lade-Beanstandungen (0.9.2; Regeln/05, Sicherungsmodul 1.3.0)
+ *
+ * sw_config() setzt fuer einen ungueltigen gespeicherten Wert die Vorgabe ein - auch fuer die ganze Geraeteliste. Das
+ * bleibt - aber jede solche Ersetzung wird gemeldet (Reiter Test rot, Seite gelb, einmal ins Protokoll) und nie in die
+ * Datei zurueckgeschrieben. Bis 0.9.1 still; sw_rueckspiel_altwerte() sah es nicht, denn sie prueft den schon
+ * bereinigten Stand.
+ * ================================================================== */
+
+/** Die rohen Werte von shelly.json (ohne jede Normierung), null = keine lesbare Datei. Schreibt nichts. */
+function sw_lade_roh()
+{
+    $p = sw_paths();
+    clearstatcache(true, $p['cfgdatei']);
+    return sw_json_lesen($p['cfgdatei']);
+}
+
+/** Die Beschreibung fuer die Lade-Beanstandungen. $maskiert = true fuer den gelben Kasten (gibt unmittelbar aus);
+ *  false fuer die Tabelle des Reiters Test und die Meldungen (die Seite maskiert bei der Ausgabe). */
+function sw_lade_b($maskiert = true)
+{
+    $b = sw_sicherung_beschreibung();
+    $b['geheim'] = array('token');      // das Aktionstoken dieser Linie heisst token
+    if ($maskiert) {
+        $pr = $b['pruefen'];
+        $b['pruefen'] = function ($k, $w) use ($pr) {
+            $t = call_user_func($pr, $k, $w);
+            return ($t === '' || $t === array() || $t === null) ? $t : sw_e(is_array($t) ? implode(' ', $t) : (string) $t);
+        };
+    } else {
+        $b['e'] = function ($s) { return (string) $s; };
+    }
+    return $b;
+}
+
+/** Die Lade-Beanstandungen: rohe Dateiwerte gegen den verwendeten Stand ($cfg, sonst sw_config(false)). */
+function sw_lade_beanstandungen($cfg = null, $maskiert = true)
+{
+    $d = sw_lade_roh();
+    if ($d === null) { return array(); }
+    $v = is_array($cfg) ? $cfg : sw_config(false);
+    return is_array($v) ? sicherung_lade_beanstandungen(sw_lade_b($maskiert), $d, $v) : array();
+}
+
+/** Vor dem Schreiben: jedes beanstandete Feld, das $c nicht geaendert hat, bekommt seinen Dateiwert zurueck. */
+function sw_lade_behalten(array $c)
+{
+    $d = sw_lade_roh();
+    $v = sw_config(false);
+    if ($d === null || !is_array($v)) { return $c; }
+    list($c, ) = sicherung_lade_behalten($c, $d, $v, sicherung_lade_beanstandungen(sw_lade_b(false), $d, $v));
+    return $c;
+}
+
+/** Minutentakt (bin/sw_takt.php): fehlende Einstellungen eintragen, dann die Lade-Beanstandungen einmal melden. */
+function sw_dienst_pflege()
+{
+    $r = sw_config_vervollstaendigen();
+    sw_lade_melden(sw_lade_beanstandungen());     // Kennung D
+    return $r;
+}
+
+/** Einmal je Aenderung ins Protokoll (nur Namen und Gruende, nie Werte). */
+function sw_lade_melden(array $beanst)
+{
+    $d = sw_paths()['datadir'];
+    if ($d === '' || !is_dir($d)) { return; }
+    if (sicherung_lade_melden_faellig($beanst, $d . '/lade_beanstandungen.merk')) {
+        sw_log(sicherung_lade_protokollzeile($beanst));
+    }
 }
 
 /** Eine JSON-Datei als Feld lesen; null, wenn sie fehlt oder kein Objekt/keine Liste ist. */
@@ -491,6 +571,11 @@ function sw_config($erzeugen = true)
                 list($ok, $w) = sw_wert_pruefen($k, $d[$k]);
                 if ($ok) {
                     $c[$k] = $w;
+                } elseif ($k === 'token' && is_string($d[$k]) && $d[$k] !== '') {
+                    /* 0.9.2 (Lade-Beanstandungen, Regeln/05): ein vorhandenes Token bleibt, auch ein formwidriges - es
+                     * wird gemeldet (sw_lade_beanstandungen()). Bis 0.9.1 galt hier die Vorgabe '', und der Endpunkt
+                     * lehnte jede Adresse im Miniserver ab, ohne dass ein neues entstand. */
+                    $c[$k] = $d[$k];
                 }
             }
         }
@@ -505,10 +590,14 @@ function sw_config($erzeugen = true)
 
 /** Konfiguration und Zweitschrift schreiben, beide unteilbar. Rueckgabe true nur, wenn die Konfiguration dasteht;
  *  $zweit sagt, ob auch die Zweitschrift steht. */
-function sw_config_speichern(array $c, &$zweit = null)
+function sw_config_speichern(array $c, &$zweit = null, $lade_behalten = true)
 {
     $p = sw_paths();
     $zweit = false;
+    /* 0.9.2 (Lade-Beanstandungen, Regeln/05, Entscheidung des Hausherrn "Dateiwert behalten"): ein beim Laden
+     * beanstandetes Feld, das der neue Stand nicht geaendert hat, behaelt seinen gespeicherten Wert. Nicht beim
+     * Zurueckspielen und nicht beim Knopf "Angezeigte Werte uebernehmen" ($lade_behalten = false). */
+    if ($lade_behalten) { $c = sw_lade_behalten($c); }
     if (!sw_json_schreiben($p['cfgdatei'], $c)) {
         return false;
     }
@@ -542,7 +631,7 @@ function sw_config_vervollstaendigen()
     }
     $roh = @file_get_contents($p['cfgdatei']);
     $datei = is_string($roh) ? json_decode($roh, true) : null;
-    if (!is_array($datei) || !isset($datei['token']) || !sw_token_taugt($datei['token']) || $datei['token'] === '') {
+    if (!is_array($datei) || !isset($datei['token']) || !is_string($datei['token']) || $datei['token'] === '') {
         return array('stand' => 'ohne_merkwort', 'schluessel' => array());
     }
     $fehlend = array();
@@ -645,6 +734,7 @@ function sw_sicherung_beschreibung()
         'vorgaben' => sw_vorgaben(),
         'schluessel' => array(
             'geraete' => sicherung_liste(array('praefix', 'name', 'ein'), 'praefix'),
+            'meldung' => meld_sicherung_knoten(sw_meld_anlaesse(), sw_meld_k()),     // 0.9.2: fehlt -> behalten
             'haus_klima_ein' => array('wandeln' => function ($w) {
                 list(, $v) = sw_wert_pruefen('haus_klima_ein', $w);
                 return $v;
@@ -2248,6 +2338,7 @@ function sw_lauschen(array $c, $bis, $platz)
     $z['abos'] = count($abos);
     sw_lauscher_merken($platz, $z);
     list($lage, $s) = sw_mq_verbinden('swlausch' . $platz . getmypid(), 60);
+    if ($lage !== 'ok') { sw_meld_broker_lauf($lage, $c); }     // 0.9.2: Merker 'Broker weg' fuer die Meldung an SignalBot
     if ($lage !== 'ok') {
         $z['lage'] = $lage;
         $z['ende'] = time();
@@ -2339,6 +2430,7 @@ function sw_lauschen(array $c, $bis, $platz)
         }
     }
     sw_mq_trennen($s);
+    sw_meld_broker_lauf('ok', $c);     // 0.9.2: angemeldet - nach einem Ausfall die Meldung 'wieder erreichbar'
     $z['lage'] = $lage;
     $z['ende'] = time();
     sw_lauscher_merken($platz, $z);
@@ -2630,4 +2722,173 @@ function sw_pruef_meldetakt(array $stand)
         return array('hinweis', sprintf(sw_t('TEST.TAKT_STILL'), $still, $n, (int) (SW_STUMM / 60)));
     }
     return array('ok', sprintf(sw_t('TEST.TAKT_OK'), $n, $max > 0 ? sw_alter_text($max) : '-'));
+}
+
+/* ---------------- Statusmeldungen an SignalBot (0.9.2, gemeinsames Modul meldung.php) ----------------
+ *
+ * Auftrag des Hausherrn 23.11.2026, Entscheidungen 23./24.11.2026: dieselben Anlaesse wie die Ansage, eigener Haken je
+ * Anlass, ab Werk aus; Sperre, Bremse und Versand im Modul. Die Erkennung laeuft auch ohne Ausgabeart, wenn eine Meldung
+ * eingeschaltet ist (sw_meld_aktiv()), und legt einen Anlass hin, wenn Ansage ODER Meldung ihn will
+ * (sw_meld_will()); der Sender trennt die Wege wieder (sw_meld_nur_ansage()).
+ */
+
+/** Die meldbaren Anlaesse: Name => Beschriftung (dieselben wie die Ansage). */
+function sw_meld_anlaesse()
+{
+    return array('broker_wieder' => sw_t('SW_MELD.L_WIEDER'));
+}
+
+/** Die ab-Werk-Haken der Ansage dieser Linie: so stehen auch die Haken der Meldung, solange der Block nie gespeichert ist. */
+function sw_meld_haken_vorgabe()
+{
+    return array('broker_wieder' => 1);
+}
+
+/** Ist der Haken dieses Anlasses fuer die ANSAGE gesetzt? */
+function sw_ansage_anlass_sprache($a, $cfg = null)
+{
+    if ($cfg === null) { $cfg = sw_config(false); }
+    return false;
+}
+
+/** Der wirksame Block 'meldung' fuer den Betrieb (ungueltig gespeichert gilt als aus und wird im Formular genannt). */
+function sw_meld_block($cfg = null)
+{
+    if ($cfg === null) { $cfg = sw_config(false); }
+    list($b) = meld_block(is_array($cfg) && array_key_exists('meldung', $cfg) ? $cfg['meldung'] : null, sw_meld_anlaesse(), sw_meld_haken_vorgabe());
+    return $b;
+}
+
+/** Die Beanstandungen eines gespeicherten Blocks (leer = gueltig). */
+function sw_meld_bean($cfg = null)
+{
+    if ($cfg === null) { $cfg = sw_config(false); }
+    list(, $f) = meld_block(is_array($cfg) && array_key_exists('meldung', $cfg) ? $cfg['meldung'] : null, sw_meld_anlaesse(), sw_meld_haken_vorgabe());
+    return $f;
+}
+
+/** Ist irgendein Anlass zur Meldung eingeschaltet? Dann laeuft die Erkennung auch ohne Ausgabeart. */
+function sw_meld_aktiv($cfg = null)
+{
+    return meld_irgendein_an(sw_meld_block($cfg));
+}
+
+/** Will die Ansage ODER die Meldung diesen Anlass? */
+function sw_meld_will($a, $cfg = null)
+{
+    if ($cfg === null) { $cfg = sw_config(false); }
+    return sw_ansage_anlass_sprache($a, $cfg) || meld_anlass_an(sw_meld_block($cfg), (string) $a);
+}
+
+/** Der Kontext des Moduls: Datenordner (data/plugins/<ordner>, daraus der Absender) und Texte - wie bei der Ansage. */
+function sw_meld_k()
+{
+    return array('plugin' => (string) sw_paths()['plugin'], 'ordner' => (string) sw_paths()['datadir'], 'home' => (string) sw_paths()['lbhome'], 'name' => 'Shelly-Weiche', 't' => function ($s) { return sw_t($s); });
+}
+
+/** Fuer die Ansage nur Eintraege, deren Ansage-Haken gesetzt ist; ein Eintrag ohne bekannten Anlass bleibt wie bisher. */
+function sw_meld_nur_ansage(array $l, $cfg = null)
+{
+    if ($cfg === null) { $cfg = sw_config(false); }
+    $anl = sw_meld_anlaesse();
+    $aus = array();
+    foreach ($l as $e) {
+        if (is_array($e) && array_key_exists(meld_anlass_von($e), $anl) && !sw_ansage_anlass_sprache(meld_anlass_von($e), $cfg)) { continue; }
+        $aus[] = $e;
+    }
+    return $aus;
+}
+
+/** Die Eintraege an SignalBot melden. Protokoll: eine Zeile, wenn gesendet oder gescheitert (nie der Text). */
+function sw_meld_senden(array $l, $cfg = null)
+{
+    if ($cfg === null) { $cfg = sw_config(false); }
+    $b = sw_meld_block($cfg);
+    if (empty($b['ein']) || !$l) { return null; }
+    $a = meld_regel_senden($l, $b, sw_meld_k());
+    if ($a['regel'] === '' || in_array($a['regel'], array('BREMSE', 'STAND', 'ORDNER'), true)) {
+        sw_log(meld_regel_kurz($a));
+    }
+    return $a;
+}
+
+/** Der Knopf "Testmeldung senden": array(angenommen, Satz). Geht an Haken, Sperre und Bremse vorbei. */
+function sw_meld_test()
+{
+    $r = meld_testmeldung(sw_meld_k());
+    sw_log('Testmeldung an SignalBot: ' . ($r[0] ? 'angenommen' : 'nicht angenommen'));
+    return $r;
+}
+
+/** Der Block im Einstellungsformular (unter den Ansage-Regeln, im selben Formular), mit Lage und Knopf. */
+function sw_meld_form_html($cfg = null)
+{
+    if ($cfg === null) { $cfg = sw_config(false); }
+    $e = function ($s) { return htmlspecialchars((string) $s, ENT_QUOTES, 'UTF-8'); };
+    $k = sw_meld_k();
+    $o = array();
+    /* 0.9.2: unsichtbarer Doppel des Speicherknopfs VOR dem Knopf Testmeldung - die Eingabetaste in einem Textfeld
+     * loest den ersten Absendeknopf des Formulars aus; sie soll speichern wie bisher, nicht die Testmeldung senden. */
+    $o[] = '<button data-role="none" type="submit" name="mqtt_speichern" value="1" tabindex="-1" aria-hidden="true" style="position:absolute;left:-10000px;top:auto;width:1px;height:1px;overflow:hidden"></button>';
+    $o[] = '<h3>' . $e(meld_t('TITEL', $k)) . '</h3>';
+    $o[] = meld_formular_html(sw_meld_block($cfg), sw_meld_anlaesse(), array(), $k);
+    list(, $lage) = meld_pruefzeile(sw_meld_block($cfg), sw_meld_bean($cfg), $k);
+    $o[] = '<div class="sm-hilfe">' . $e(meld_t('F_TEST', $k) . ' ' . $lage) . '</div>';
+    $o[] = '<div class="sm-knopfreihe"><button data-role="none" class="sm-btn sm-b-aktion" type="submit" name="meld_test" value="1">'
+         . $e(meld_t('K_TEST', $k)) . '</button></div>';
+    return implode("\n", $o) . "\n";
+}
+
+/** Die Dauer eines Ausfalls fuer den Satz SW_MELD.WIEDER: Minuten, ab zwei Stunden Stunden und Minuten, ab zwei Tagen Tage
+ *  und Stunden (mindestens 1 min). */
+function sw_meld_dauer($sek)
+{
+    $m = max(1, (int) round(max(0, (int) $sek) / 60));
+    if ($m < 120) { return sprintf(sw_t('SW_MELD.DAUER_MIN'), $m); }
+    if ($m < 2880) { return sprintf(sw_t('SW_MELD.DAUER_H'), intdiv($m, 60), $m % 60); }
+    return sprintf(sw_t('SW_MELD.DAUER_T'), intdiv($m, 1440), intdiv($m % 1440, 60));
+}
+
+/**
+ * Die Flanke des Brokers fuer die Meldung (0.9.2, Entscheidung des Hausherrn 24.11.2026 "Nur 'wieder da' mit Dauer"):
+ * aus dem Lauscher mit der Lage der Anmeldung. Nicht ok: Merker meld_broker.json {weg_seit} beim ersten Fehlschlag (ein
+ * vorhandener bleibt). Ok mit Merker: eine Nachricht broker_wieder mit der Dauer, Merker weg. Unter der Sperre meld_broker
+ * (zwei Lauscher ueberlappen). Kein Anlass an (Block oder Haken aus): nichts senden, Merker verworfen. Rueckgabe aus, weg,
+ * nichts, die Regel des Moduls oder die Lage der Quittung.
+ */
+function sw_meld_broker($lage, $cfg = null, $jetzt = null)
+{
+    if ($cfg === null) { $cfg = sw_config(false); }
+    if ($jetzt === null) { $jetzt = time(); }
+    $d = (string) sw_paths()['datadir'];
+    if ($d === '') { return 'aus'; }
+    $f = $d . '/meld_broker.json';
+    if (!is_array($cfg) || !sw_meld_aktiv($cfg)) { if (is_file($f)) { @unlink($f); } return 'aus'; }
+    $sp = sw_sperre('meld_broker');
+    $m = sw_json_lesen($f);
+    $seit = (is_array($m) && isset($m['weg_seit']) && is_int($m['weg_seit'])) ? $m['weg_seit'] : 0;
+    if ((string) $lage !== 'ok') {
+        if ($seit === 0) { sw_json_schreiben($f, array('weg_seit' => (int) $jetzt)); }
+        sw_freigeben($sp);
+        return 'weg';
+    }
+    if ($seit === 0) { sw_freigeben($sp); return 'nichts'; }
+    @unlink($f);
+    sw_freigeben($sp);
+    $a = sw_meld_senden(array(array('schluessel' => 'broker_wieder', 'anlass' => 'broker_wieder',
+                                    'text' => sprintf(sw_t('SW_MELD.WIEDER'), sw_meld_dauer((int) $jetzt - $seit)))), $cfg);
+    if (!is_array($a)) { return 'aus'; }
+    if ($a['regel'] !== '') { return $a['regel']; }
+    return (is_array($a['q']) && isset($a['q']['lage'])) ? (string) $a['q']['lage'] : 'gesendet';
+}
+
+/** Abgeschirmt fuer den Lauscher: ein Fehler der Meldung haelt ihn nie auf (eine Protokollzeile, nie ein Wert). */
+function sw_meld_broker_lauf($lage, $cfg = null)
+{
+    try {
+        return sw_meld_broker($lage, $cfg);
+    } catch (Throwable $e) {
+        sw_log('Meldung an SignalBot: ' . get_class($e));
+        return 'fehler';
+    }
 }

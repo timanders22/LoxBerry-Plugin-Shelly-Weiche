@@ -138,7 +138,10 @@ function sw_zeilen(array $c, array $stand)
 if ($sw_post && isset($_POST['speichern'])) {
     $sw_neu = $sw_cfg;
     $sw_roh = sw_feld('token');
-    if ($sw_roh !== '' && !sw_token_taugt($sw_roh)) {
+    /* 0.9.2 (Lade-Beanstandungen, Entscheidung des Hausherrn 24.11.2026): ein unveraendert gesendetes Token - das
+       gespeicherte, auch ein formwidriges - ist keine Eingabe; es behaelt seinen Dateiwert und bleibt gemeldet, und
+       das Formular speichert. Nur ein GEAENDERTES formwidriges Token wird abgewiesen. */
+    if ($sw_roh !== '' && $sw_roh !== (string) $sw_cfg['token'] && !sw_token_taugt($sw_roh)) {
         $sw_fehler[] = array('kopf' => sw_t('TEXT.NICHT_GESPEICHERT'),
                              'punkte' => array(sprintf(sw_t('TEXT.TOKEN_UNGUELTIG'), strlen($sw_roh))));
     } else {
@@ -186,6 +189,12 @@ if ($sw_post && isset($_POST['mqtt_speichern'])) {
     } else {
         $sw_neu['abo_zusatz'] = $sw_roh;
     }
+    /* 0.9.2: der Block 'Meldungen an SignalBot' (eine Beanstandung haelt das Speichern an, wie jede andere) */
+    $sw_mm = array();
+    $sw_mb = array();
+    $sw_neu['meldung'] = meld_formular_lesen($_POST, isset($sw_cfg['meldung']) ? $sw_cfg['meldung'] : null, sw_meld_anlaesse(),
+                                             $sw_mm, $sw_mb, sw_meld_k(), sw_meld_haken_vorgabe());
+    foreach ($sw_mm as $sw_m1) { $sw_mangel[] = $sw_m1['text']; }
     $sw_bekannt = array();
     foreach (sw_zeilen($sw_cfg, $sw_stand) as $sw_z) {
         $sw_bekannt[$sw_z['praefix']] = true;
@@ -238,6 +247,12 @@ if ($sw_post && isset($_POST['mqtt_speichern'])) {
     $sw_cfg = sw_config();
 }
 
+/* 0.9.2: Testmeldung an SignalBot (Knopf im Formular des Reiters MQTT, im Block). Speichert nichts. */
+if ($sw_post && isset($_POST['meld_test'])) {
+    list($meld_ok, $meld_satz) = sw_meld_test();
+    if ($meld_ok) { $sw_meldung = $meld_satz; } else { $sw_fehler[] = $meld_satz; }
+}
+
 /* ---------------- Einstellungen sichern ----------------
    Ausgegeben wird die VOLLE Konfiguration samt Aktionstoken (ohne es waere die Datei nach dem Zurueckspielen
    wertlos); der Hinweis am Knopf sagt das. Der Download ist die eine Antwort ohne Umleitung (Regeln/04). */
@@ -264,7 +279,8 @@ if ($sw_post && isset($_POST['sw_zurueck'])) {
         foreach ($sw_sm['fehler'] as $sw_x) { $sw_fehler[] = $sw_x; }
     } else {
         $sw_b = sw_sicherung_klartext();
-        $sw_b['speichern'] = function ($neu) { return sw_config_speichern($neu); };
+        // 0.9.2: die Werte einer Sicherung sind ausdruecklich - kein "Dateiwert behalten" (Regeln/05)
+        $sw_b['speichern'] = function ($neu) { $sw_z = null; return sw_config_speichern($neu, $sw_z, false); };
         $sw_b['zweitschrift'] = function () { $p = sw_paths(); return array($p['cfgdatei'], $p['sicherung']); };
         $sw_b['nachziehen'] = 'sw_sicherung_nachziehen';
         $sw_b['log'] = 'sw_log';
@@ -278,6 +294,33 @@ if ($sw_post && isset($_POST['sw_zurueck'])) {
         foreach ($sw_sh as $sw_x) { $sw_hinweise[] = $sw_x; }
         $sw_cfg = sw_config();
     }
+}
+
+/* ---------------- Lade-Beanstandungen: angezeigte Werte uebernehmen (0.9.2) ----------------
+   Nur mit gesetztem Haken (Entscheidung des Hausherrn 24.11.2026, "Haken im gelben Kasten"); ohne ihn bleibt die
+   Datei byte-gleich. Geschrieben ohne "Dateiwert behalten". */
+if ($sw_post && sicherung_lade_eingang($_POST) !== '') {
+    $sw_lb = sw_lade_b(false);
+    if (sicherung_lade_eingang($_POST) !== 'ja') {
+        $sw_fehler[] = sicherung_t('K_LADE_HAKEN_FEHLT', $sw_lb);
+    } else {
+        $sw_ld = sw_lade_roh();
+        $sw_lv = sw_config(false);
+        $sw_un = array();
+        if ($sw_ld !== null && is_array($sw_lv)) {
+            list($sw_lneu, $sw_un) = sicherung_lade_uebernehmen_stand($sw_ld, $sw_lv, sicherung_lade_beanstandungen($sw_lb, $sw_ld, $sw_lv));
+            $sw_lz = null;
+            if ($sw_un && !sw_config_speichern($sw_lneu, $sw_lz, false)) {
+                $sw_fehler[] = sw_t('TEXT.NICHT_GESPEICHERT');
+                $sw_un = array();
+            }
+        }
+        if ($sw_un) {
+            sw_log('Lade-Beanstandungen: angezeigte Werte uebernommen: ' . implode(', ', array_map('sicherung_name', $sw_un)));
+            $sw_meldung = sprintf(sicherung_t('K_LADE_UEBERNOMMEN', $sw_lb), implode(', ', $sw_un));
+        }
+    }
+    $sw_cfg = sw_config();
 }
 
 /* ---------------- Umleitung nach jedem POST (PRG) ----------------
@@ -431,6 +474,11 @@ function sw_wert_anzeige(array $g, $feld, $art)
 <?php } elseif (is_string($sw_fm)) { ?><div class="sm-fehler"><?= sw_e($sw_fm) ?></div><?php }
 } ?>
 
+<?php /* 0.9.2: Lade-Beanstandungen (Regeln/05) - gelber Kasten; einmal je Aenderung ins Protokoll. */
+$sw_lade = sw_lade_beanstandungen();
+sw_lade_melden($sw_lade); ?>
+<?= sicherung_lade_kasten(sw_lade_b(true), isset($sw_lade) ? $sw_lade : sw_lade_beanstandungen(),
+        sw_fmt() . '<input data-role="none" type="hidden" name="activetab" value="' . sw_e($sw_tab) . '">') ?>
 <?php /* Kopf: Statusuebersicht ueber den Reitern, nur aus den Dateien des Datenordners - die Seite fragt den Broker
    dafuer nicht. */
 $sw_ll = sw_lauscher_lesen();
@@ -576,6 +624,7 @@ foreach ($sw_gl as $sw_pr => $sw_g) {
     <input data-role="none" type="text" name="abo_zusatz" value="<?= sw_e($sw_cfg['abo_zusatz']) ?>" maxlength="100" placeholder="haus/+/+/events/rpc">
     <p class="sm-hilfe"><?= sw_t('MQTT.H_ABO') ?></p>
   </div>
+  <?= sw_meld_form_html($sw_cfg) ?>
   <div class="sm-knopfreihe">
     <button data-role="none" class="sm-btn sm-b-aktion" type="submit" name="mqtt_speichern" value="1"><?= sw_e(sw_t('MQTT.K_SPEICHERN')) ?></button>
   </div>
@@ -726,6 +775,12 @@ $sw_alt_t = sw_rueckspiel_altwerte($sw_cfg);
 $sw_zeilen_t[] = array(sw_t('TEST.Z_SICHERUNG'), $sw_alt_t ? array('fehl', sprintf(sw_t('TEXT.SICH_ALTWERT'), implode(', ', $sw_alt_t)))
     : array('ok', sw_t('TEST.SICHERUNG_OK')));
 $sw_zeilen_t[] = array(sw_t('TEST.Z_HAUS'), sw_pruef_haus($sw_cfg, $sw_offen));
+/* 0.9.2: Lade-Beanstandungen (Regeln/05, Sicherungsmodul 1.3.0) - rot, solange ein gespeicherter Wert beim Laden nicht so
+   gilt, wie er gespeichert ist. */
+$sw_lb = sw_lade_b(false);
+$sw_la = sw_lade_beanstandungen($sw_cfg, false);
+$sw_zeilen_t[] = array(sicherung_t('K_LADE_FRAGE', $sw_lb), $sw_la ? array('fehl', implode(' ', sicherung_lade_saetze($sw_lb, $sw_la)))
+    : array('ok', sicherung_t('K_LADE_KEINE', $sw_lb)));
 $sw_schlecht = 'ok';
 foreach ($sw_zeilen_t as $sw_zt) {
     if ($sw_zt[1][0] === 'fehl') { $sw_schlecht = 'fehl'; }

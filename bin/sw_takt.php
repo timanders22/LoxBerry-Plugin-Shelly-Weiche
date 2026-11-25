@@ -112,6 +112,6 @@ if ($sw_schalter === '--selbsttest') {
 
 /* Fehlende Vorgaben einmal in shelly.json schreiben (Regeln/05) - vor dem ersten Lesen der Konfiguration in diesem
    Lauf. Waehrend einer Aktualisierung (Marke) schreibt die Funktion nichts. */
-sw_config_vervollstaendigen();
+sw_dienst_pflege();     // 0.9.2: vervollstaendigen und Lade-Beanstandungen einmal melden (Regeln/05)
 $sw_r = sw_minutenlauf();
 exit(in_array($sw_r['ende'], array('gelaufen', 'besetzt', 'schranke', 'upgrade', 'nicht_eingerichtet'), true) ? 0 : 1);
