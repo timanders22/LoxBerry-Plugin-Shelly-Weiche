@@ -1,6 +1,6 @@
 # Shelly-Weiche – LoxBerry-Plugin
 
-Fassung 0.9.2.
+Fassung 0.9.3.
 
 Shelly H&T Gen3 (Batteriefühler für Temperatur und Feuchte) melden sich mit eigenem MQTT am Broker des LoxBerry. Ihre Messwerte kommen als JSON-RPC-Benachrichtigung unter `<präfix>/events/rpc`, **nicht zurückbehalten** und nur in den kurzen Augenblicken, in denen das Gerät aufwacht. Wer später fragt, bekommt nichts; zurückbehalten ist nur `<präfix>/online`, und das steht im Schlaf auf `false`.
 
